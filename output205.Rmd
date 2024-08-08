@@ -1,0 +1,260 @@
+---
+title: "output205"
+author: "Benjamin Ryu"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+setwd("~/Research_SP24/205")
+library(tidycensus)
+library(tidyverse)
+library(stargazer)
+library(ipumsr)
+library(R.utils)
+library(plm)
+library(cobalt)
+library(tables)
+library(MatchIt)
+library(twang)
+library(tibble)
+library(data.table)
+library(xtable)
+library(ggplot2)
+rm(list = ls())
+
+ddi <- read_ipums_ddi("usa_00012.xml")
+dta <- read_ipums_micro(ddi)
+
+dta <- dta[dta$INCWAGE != 999999,]
+dta <- dta[dta$INCWAGE != 999998,]
+dta <- dta[dta$INCWAGE != 0,]
+dta <- dta[dta$SEX != 9,]
+dta$SEX <- dta$SEX -1
+dta <- dta[dta$POVERTY != 000,]
+
+dta <- dta[dta$STATEFIP <= 56,]
+dta <- dta[dta$STATEFIP != 1,]
+dta <- dta[dta$STATEFIP != 5,]
+dta <- dta[dta$STATEFIP != 13,]
+dta <- dta[dta$STATEFIP != 17,]
+dta <- dta[dta$STATEFIP != 18,]
+dta <- dta[dta$STATEFIP != 22,]
+dta <- dta[dta$STATEFIP != 26,]
+dta <- dta[dta$STATEFIP != 27,]
+dta <- dta[dta$STATEFIP != 28,]
+dta <- dta[dta$STATEFIP != 30,]
+dta <- dta[dta$STATEFIP != 31,]
+dta <- dta[dta$STATEFIP != 32,]
+dta <- dta[dta$STATEFIP != 39,]
+dta <- dta[dta$STATEFIP != 45,]
+dta <- dta[dta$STATEFIP != 47,]
+dta <- dta[dta$STATEFIP != 50,]
+dta <- dta[dta$STATEFIP != 51,]
+
+dta$treat <- ifelse(dta$STATEFIP == 2|dta$STATEFIP == 4|dta$STATEFIP == 8|dta$STATEFIP == 9|
+                      dta$STATEFIP == 10|dta$STATEFIP == 12|dta$STATEFIP == 15|dta$STATEFIP == 24|
+                      dta$STATEFIP == 24|dta$STATEFIP == 25|dta$STATEFIP == 29|dta$STATEFIP == 34|
+                      dta$STATEFIP == 36|dta$STATEFIP == 41|dta$STATEFIP == 44|dta$STATEFIP == 46|
+                      dta$STATEFIP == 53|dta$STATEFIP == 54|dta$STATEFIP == 11, 1,0)
+
+
+dta$RACE <- factor(dta$RACE)
+wage <- dta[dta$YEAR ==2015 | dta$YEAR ==2016,]
+dta <- dta[dta$YEAR ==2014 | dta$YEAR ==2015,]
+dta$after <- ifelse(dta$YEAR >= 2015, 1,0)
+dta$policy <- dta$treat*dta$after
+wage$after <- ifelse(wage$YEAR >= 2016, 1,0)
+dta <- dta[dta$EMPSTAT != 0,]
+dta <- dta[dta$EMPSTAT != 3,]
+dta <- dta[dta$EMPSTAT != 9,]
+dta$EMPSTAT <- dta$EMPSTAT -1
+#income year might have to be different
+
+wage$lnINCWAGE <- log(wage$INCWAGE)
+wage$policy <- wage$treat*wage$after
+didwage <- glm(lnINCWAGE ~ treat + after + treat*after , data=wage)
+#
+
+pdidwage <- plm(lnINCWAGE ~ treat + after + treat*after, index=c("STATEFIP"), model="within", data = wage)
+#pdidwage <- glm(lnINCWAGE ~ treat + after + treat*after + factor(STATEFIP), data = wage)
+summary(pdidwage)
+dtap <- dta[dta$POVERTY != 0,]
+dtaPOV <- dtap[dtap$POVERTY < 100,]
+dtaPOV5 <- dtap[dtap$POVERTY < 50,]
+
+unemp <- aggregate(dta$EMPSTAT, by = list(STATEFIP = dta$STATEFIP, YEAR = dta$YEAR), FUN = function(x) sum(x==1))
+
+LABORFORCE <- aggregate(dta$EMPSTAT, by = list(STATEFIP = dta$STATEFIP, YEAR = dta$YEAR), FUN = length)
+
+UNEMPRATE <- data.frame(STATEFIP = unemp$STATEFIP, YEAR = unemp$YEAR, UNEMPRATE = (unemp$x/LABORFORCE$x)*100)
+
+print(UNEMPRATE)
+
+dta <- merge(dta, UNEMPRATE, by=c('STATEFIP', 'YEAR'))
+
+didemp <- glm(UNEMPRATE ~ treat + after + treat*after, data=dta)
+#summary(didemp)
+
+pdidemp <- plm(UNEMPRATE ~ treat + after + treat*after,index=c("STATEFIP"), model="within", data = dta)
+#summary(pdidemp)
+
+
+
+cov <- subset(dta, select=-c(after, CLUSTER, COUNTYFIP, STATEFIP, HHWT, PERWT, YEAR, RACED, EMPSTATD, policy))
+
+
+
+#table.1 <- bal.tab(cov, treat = dta$treat,  s.d.denom = c("treated"))
+#bal.tab(cov, treat = dta$treat,  s.d.denom = c("treated"), disp = c("diff", "means", "sds"))
+
+new.names <- c(SEX = "Sex",
+              AGE = "Age (Years)",
+               RACE_1 = "Race: White",
+               RACE_2 = "Race: Black",
+               RACE_3 = "Race: Native American",
+               RACE_4 = "Race: Chinese",
+               RACE_5 = "Race: Japanese",
+               RACE_6 = "Race: Other Asian ",
+               RACE_7 = "Race: Other race",
+               RACE_8 = "Race: Two major races",
+               RACE_9 = "Race: Three + major races",
+               INCWAGE = "Income in Wage",
+               POVERTY = "Poverty Threshold",
+               UNEMPRATE = "Unemployment Rate")
+
+
+#bal <- bal.tab(cov, treat = dta$treat, disp = c("diff", "means", "sds"), s.d.denom = c("treated"))
+#b.tab <- bal.tab(treat ~ SEX + AGE + RACE + INCWAGE + POVERTY + UNEMPRATE, data=cov, weights = "att.weights", s.d.denom = c("treated"), disp = c("means", "sds"), un = TRUE, stats = c("mean.diffs", "variance.ratios"))
+
+
+#bal.plot(cov, treat = dta$treat,  s.d.denom = c("treated"), disp = c("diff", "means", "sds"))
+#baltb <- ps(treat ~ SEX + AGE + RACE + INCWAGE + POVERTY, data = cov)
+#m.out <- matchit(treat ~ SEX + AGE + RACE + INCWAGE + POVERTY, data = cov, method = "nearest", replace = TRUE)
+
+#love.plot(balb, binary = "std", thresholds = c(m = .1), var.names = new.names, title = "Balance Table")
+
+
+fips_codes
+fips_codes <- fips_codes[fips_codes$state_code <= 56,]
+fips_codes <- fips_codes[fips_codes$state_code != 1,]
+fips_codes <- fips_codes[fips_codes$state_code != 5,]
+fips_codes <- fips_codes[fips_codes$state_code != 13,]
+fips_codes <- fips_codes[fips_codes$state_code != 17,]
+fips_codes <- fips_codes[fips_codes$state_code != 18,]
+fips_codes <- fips_codes[fips_codes$state_code != 22,]
+fips_codes <- fips_codes[fips_codes$state_code != 26,]
+fips_codes <- fips_codes[fips_codes$state_code != 27,]
+fips_codes <- fips_codes[fips_codes$state_code != 28,]
+fips_codes <- fips_codes[fips_codes$state_code != 30,]
+fips_codes <- fips_codes[fips_codes$state_code != 31,]
+fips_codes <- fips_codes[fips_codes$state_code != 32,]
+fips_codes <- fips_codes[fips_codes$state_code != 39,]
+fips_codes <- fips_codes[fips_codes$state_code != 45,]
+fips_codes <- fips_codes[fips_codes$state_code != 47,]
+fips_codes <- fips_codes[fips_codes$state_code != 50,]
+fips_codes <- fips_codes[fips_codes$state_code != 51,]
+
+fips_codes$treat <- ifelse(fips_codes$state_code == 2|fips_codes$state_code == 4|fips_codes$state_code == 8|fips_codes$state_code == 9|
+                      fips_codes$state_code == 10|fips_codes$state_code == 12|fips_codes$state_code == 15|fips_codes$state_code == 24|
+                      fips_codes$state_code == 24|fips_codes$state_code == 25|fips_codes$state_code == 29|fips_codes$state_code == 34|
+                      fips_codes$state_code == 36|fips_codes$state_code == 41|fips_codes$state_code == 44|fips_codes$state_code == 46|
+                      fips_codes$state_code == 53|fips_codes$state_code == 54|fips_codes$state_code == 11, 1,0)
+
+st <- subset(fips_codes, select = c(state_name, treat))
+
+states_treat_1 <- unique(subset(st , treat == 1)$state_name)
+
+# States where treat is equal to 0
+states_treat_0 <- unique(subset(st, treat == 0)$state_name)
+
+# Print the lists of states
+#cat("States where treat is equal to 1:\n", states_treat_1, "\n\n")
+#cat("States where treat is equal to 0:\n", states_treat_0, "\n")
+
+
+cov1 <- subset(dta, select=-c(after, RACE, CLUSTER, COUNTYFIP, STATEFIP, HHWT, PERWT, YEAR, RACED, EDUCD, EMPSTATD, policy))
+cov1 <- cov1[cov1$treat == 0,]
+cov2 <- subset(dta, select=-c(after, RACE, CLUSTER, COUNTYFIP, STATEFIP, HHWT, PERWT, YEAR, RACED, EDUCD, EMPSTATD, policy))
+cov2 <- cov2[cov2$treat == 1,]
+stargazer(cov1, type = 'latex', title = 'Summary Statistic for Control', covariate.labels=c('Sex', 'Age', 'Educations', 'Employment Status', 'Income in Wage', 'Poverty Threshold', 'Treatment', 'Unemployment Rate'))
+stargazer(cov2, type = 'latex', title = 'Summary Statistic for Treatment', covariate.labels=c('Sex', 'Age', 'Educations','Employment Status', 'Income in Wage', 'Poverty Threshold', 'Treatment', 'Unemployment Rate'))
+
+stargazer(didwage, didemp, pdidwage, pdidemp, type = 'latex',  float = TRUE, title='Difference in Difference', 
+          keep=c('treat', 'after', 'treat:after',  'Constant'), covariate.labels=c('Treat', 'After', 'Policy Effect', 'Constant'), 
+          dep.var.labels=c('Income', 'Unemployment Rate', 'Income: Fixed Effect', 'Unemployment Rate: Fixed Effect'))
+
+#stargazer(pdidwage, pdidemp, pdidpov, type = 'text',  float = TRUE, title='Difference in Difference: Fixed-Effect', 
+#          keep=c('after', 'policy',  'Constant'), covariate.labels=c('After', 'Policy Effect', 'Constant'), 
+#          dep.var.labels=c('Income', 'Unemployment Rate', 'Proverty Percentage'))
+# https://www.dol.gov/agencies/whd/state/minimum-wage/history
+
+
+# dividing the population by whether they are above poverty level threshold
+
+wagePOV <- wage[wage$POVERTY < 100,]
+
+unemp <- aggregate(dtaPOV$EMPSTAT, by = list(STATEFIP = dtaPOV$STATEFIP, YEAR = dtaPOV$YEAR), FUN = function(x) sum(x==1))
+
+LABORFORCE <- aggregate(dtaPOV$EMPSTAT, by = list(STATEFIP = dtaPOV$STATEFIP, YEAR = dtaPOV$YEAR), FUN = length)
+
+UNEMPRATE <- data.frame(STATEFIP = unemp$STATEFIP, YEAR = unemp$YEAR, UNEMPRATE = (unemp$x/LABORFORCE$x)*100)
+dtaPOV <- merge(dtaPOV, UNEMPRATE, by=c('STATEFIP', 'YEAR'))
+
+didpovwage <- glm(lnINCWAGE ~ treat + after + treat*after , data=wagePOV)
+#summary(didwage)
+
+pdidpovwage <- plm(lnINCWAGE ~ treat + after + treat*after, index=c('STATEFIP'), model ="within", data=wagePOV)
+#summary(pdidwage)
+
+didpovemp <- glm(UNEMPRATE ~ treat + after + treat*after, data=dtaPOV)
+#summary(didemp)
+
+pdidpovemp <- plm(UNEMPRATE ~  treat + after + treat*after, index=c('STATEFIP'), model = 'within', data=dtaPOV)
+#summary(pdidemp)
+
+stargazer(didpovwage, didpovemp, pdidpovwage, pdidpovemp, type = 'latex',  float = TRUE, title='Difference in Difference Below Poverty Threshold', 
+          keep=c('treat', 'after', 'treat:after',  'Constant'), covariate.labels=c('Treat', 'After', 'Policy Effect', 'Constant'), 
+          dep.var.labels=c('Income', 'Unemployment Rate', 'Income: Fixed Effect', 'Unemployment Rate: Fixed Effect'))
+
+
+#at 50 below threshold
+
+wagePOV5 <- wage[wage$POVERTY < 50,]
+
+unemp <- aggregate(dtaPOV5$EMPSTAT, by = list(STATEFIP = dtaPOV5$STATEFIP, YEAR = dtaPOV5$YEAR), FUN = function(x) sum(x==1))
+
+LABORFORCE <- aggregate(dtaPOV5$EMPSTAT, by = list(STATEFIP = dtaPOV5$STATEFIP, YEAR = dtaPOV5$YEAR), FUN = length)
+
+UNEMPRATE <- data.frame(STATEFIP = unemp$STATEFIP, YEAR = unemp$YEAR, UNEMPRATE = (unemp$x/LABORFORCE$x)*100)
+dtaPOV5 <- merge(dtaPOV5, UNEMPRATE, by=c('STATEFIP', 'YEAR'))
+
+didpovwage5 <- glm(lnINCWAGE ~ treat + after + treat*after , data=wagePOV5)
+#summary(didwage)
+
+pdidpovwage5 <- plm(lnINCWAGE ~  treat + after + treat*after, index=c('STATEFIP'), model ="within", data=wagePOV5)
+#summary(pdidwage)
+
+didpovemp5 <- glm(UNEMPRATE ~ treat + after + treat*after, data=dtaPOV5)
+#summary(didemp)
+
+pdidpovemp5 <- plm(UNEMPRATE ~  treat + after + treat*after, index=c('STATEFIP'), model = 'within', data=dtaPOV5)
+#summary(pdidemp)
+
+stargazer(didpovwage5, didpovemp5, pdidpovwage5, pdidpovemp5, type = 'latex',  float = TRUE, title='Difference in Difference Below 50% Poverty Threshold', 
+          keep=c('treat', 'after', 'treat:after',  'Constant'), covariate.labels=c('Treat', 'After', 'Policy Effect', 'Constant'), 
+          dep.var.labels=c('Income', 'Unemployment Rate', 'Income: Fixed Effect', 'Unemployment Rate: Fixed Effect'))
+
+
+
+#pov <- bal.tab(treat ~ SEX + AGE + RACE + INCWAGE 
+#               + POVERTY + UNEMPRATE, data=dtaPOV, 
+#               weights = "att.weights", s.d.denom = c("treated"), 
+#               disp = c("means", "sds"), un = TRUE, 
+#               stats = c("mean.diffs", "variance.ratios"))
+#plot2 <- love.plot(pov, binary = "std", thresholds = c(m = .1), var.names = new.names, title = "Balance Table: Below Poverty Threshold")
+
+#pov5 <- bal.tab(treat ~ SEX + AGE + RACE + INCWAGE + POVERTY + UNEMPRATE, data=dtaPOV5, weights = "att.weights", s.d.denom = c("treated"), disp = c("means", "sds"), un = TRUE, stats = c("mean.diffs", "variance.ratios"))
+#plot3 <- love.plot(pov5, binary = "std", thresholds = c(m = .1), var.names = new.names, title = "Balance Table: Below 50% Poverty Threshold")
+
+```
